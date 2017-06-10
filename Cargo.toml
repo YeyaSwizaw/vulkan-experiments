@@ -1,0 +1,15 @@
+[package]
+name = "platformer"
+version = "0.1.0"
+authors = ["Samuel Sleight <samuel.sleight@gmail.com>"]
+
+[dependencies]
+stateloop = { path = "../states" }
+vulkano = "0.4.0"
+vulkano-win = "0.4.0"
+vulkano-shader-derive = "0.4.0"
+
+[replace]
+"vulkano:0.4.0" = { path = "../vulkano/vulkano" }
+"vulkano-win:0.4.0" = { path = "../vulkano/vulkano-win" }
+"vulkano-shader-derive:0.4.0" = { path = "../vulkano/vulkano-shader-derive" }
