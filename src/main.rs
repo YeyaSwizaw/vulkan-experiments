@@ -3,6 +3,7 @@
 #[macro_use] extern crate vulkano_shader_derive;
 extern crate vulkano_win;
 
+use std::time::{Duration, Instant};
 use stateloop::app::{App, Data, Event, Window};
 use stateloop::state::Action;
 
@@ -12,6 +13,8 @@ use renderer::Renderer;
 
 mod shaders;
 mod renderer;
+mod ty;
+mod sprite;
 
 states! {
     State {
@@ -19,7 +22,12 @@ states! {
     }
 }
 
-impl MainHandler for Data<Renderer> {
+pub struct D {
+    renderer: Renderer,
+    last_frame_time: Instant
+}
+
+impl MainHandler for Data<D> {
     fn handle_event(&mut self, event: Event) -> Action<State> {
         match event {
             Event::Closed => Action::Quit,
@@ -27,10 +35,14 @@ impl MainHandler for Data<Renderer> {
         }
     }
 
-    fn handle_tick(&mut self) {}
+    fn handle_tick(&mut self) {
+        let next = Instant::now();
+        println!("Frame Time: {:?}", next - self.data().last_frame_time);
+        self.data_mut().last_frame_time = next;
+    }
 
     fn handle_render(&self) {
-        self.data().render();
+        self.data().renderer.render();
     }
 }
 
@@ -49,7 +61,10 @@ fn main() {
             .with_title("Platformer")
             .with_dimensions(800, 600),
 
-        |window| Renderer::new(instance, window)
+        |window| D {
+            renderer: Renderer::new(instance, window),
+            last_frame_time: Instant::now()
+        }
     )
         .unwrap()
         .run(30, State::Main());

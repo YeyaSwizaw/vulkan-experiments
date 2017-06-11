@@ -13,16 +13,18 @@ use vulkano::buffer::BufferUsage;
 use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineParams, GraphicsPipelineAbstract};
 use vulkano::pipeline::vertex::SingleBufferDefinition;
-use vulkano::pipeline::input_assembly::InputAssembly;
+use vulkano::pipeline::input_assembly::{InputAssembly, PrimitiveTopology};
 use vulkano::pipeline::viewport::{Scissor, Viewport, ViewportsState};
 use vulkano::pipeline::multisample::Multisample;
 use vulkano::pipeline::depth_stencil::DepthStencil;
 use vulkano::pipeline::blend::Blend;
 use vulkano::descriptor::descriptor_set::DescriptorSet;
 use vulkano::framebuffer::{Subpass, Framebuffer, FramebufferAbstract};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferBuilder, DynamicState};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferBuilder, CommandBuffer, DynamicState};
 use vulkano::sync::{now, GpuFuture};
 
+use ty::{WorldCoords, WorldBounds, WorldRect};
+use sprite::Sprite;
 use shaders;
 
 #[derive(Copy, Clone)]
@@ -50,6 +52,8 @@ pub struct Renderer {
     framebuffers: Vec<Arc<FramebufferAbstract + Sync + Send>>,
 
     frame_future: UnsafeCell<Box<GpuFuture>>,
+
+    sprites: Vec<Sprite>
 }
 
 impl Renderer {
@@ -126,9 +130,10 @@ impl Renderer {
                 BufferUsage::vertex_buffer(),
                 Some(queue.family()),
                 [
-                     Point { point: [100.0, 200.0] },
-                     Point { point: [200.0, 300.0] },
-                     Point { point: [1100.0, 100.0] },
+                     Point { point: [0.0, 0.0] },
+                     Point { point: [1.0, 0.0] },
+                     Point { point: [0.0, 1.0] },
+                     Point { point: [1.0, 1.0] },
                 ].iter().cloned()
             )
                 .expect("Failed to create buffer")
@@ -173,7 +178,10 @@ impl Renderer {
             GraphicsPipelineParams {
                 vertex_input: SingleBufferDefinition::<Point>::new(),
                 vertex_shader: vs.main_entry_point(),
-                input_assembly: InputAssembly::triangle_list(),
+                input_assembly: InputAssembly {
+                    topology: PrimitiveTopology::TriangleStrip,
+                    primitive_restart_enable: false
+                },
                 tessellation: None,
                 geometry_shader: None,
                 viewport: ViewportsState::Fixed {
@@ -218,7 +226,19 @@ impl Renderer {
             descriptor_set: set as Arc<DescriptorSet + Sync + Send>,
             framebuffers: framebuffers,
 
-            frame_future: UnsafeCell::new(Box::new(now(device)) as Box<GpuFuture>)
+            frame_future: UnsafeCell::new(Box::new(now(device)) as Box<GpuFuture>),
+
+            sprites: vec![
+                Sprite::new(WorldRect {
+                    position: WorldCoords(600, 200),
+                    bounds: WorldBounds(700, 600)
+                }),
+
+                Sprite::new(WorldRect {
+                    position: WorldCoords(300, 800),
+                    bounds: WorldBounds(200, 300)
+                }),
+            ]
         }
     }
 
@@ -234,26 +254,31 @@ impl Renderer {
             Duration::new(1, 0)
         ).unwrap();
 
-        let command_buffer = AutoCommandBufferBuilder::new(self.device.clone(), self.queue.family())
-            .unwrap()
-            .begin_render_pass(
-                self.framebuffers[image_num].clone(),
-                false,
-                vec![[0.0, 0.0, 0.0, 1.0].into()]
+        let command_buffer = {
+            let render_pass = AutoCommandBufferBuilder::new(self.device.clone(), self.queue.family())
+                .unwrap()
+                .begin_render_pass(
+                    self.framebuffers[image_num].clone(),
+                    false,
+                    vec![[0.0, 0.0, 0.0, 1.0].into()]
+                )
+                .unwrap();
+
+            self.sprites.iter().fold(render_pass, |buffer, sprite| buffer
+                .draw(
+                    self.pipeline.clone(),
+                    DynamicState::none(),
+                    vec![self.vertex_buffer.clone()], 
+                    self.descriptor_set.clone(), 
+                    shaders::sprite::SpriteUniforms::from(sprite.rect())
+                )
+                .unwrap()
             )
-            .unwrap()
-            .draw(
-                self.pipeline.clone(),
-                DynamicState::none(),
-                vec![self.vertex_buffer.clone()], 
-                self.descriptor_set.clone(), 
-                ()
-            )
-            .unwrap()
-            .end_render_pass()
-            .unwrap()
-            .build()
-            .unwrap();
+                .end_render_pass()
+                .unwrap()
+                .build()
+                .unwrap()
+        };
 
         let future = frame_future
             .join(acquire_future)

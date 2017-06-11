@@ -1,5 +1,7 @@
 use std::fmt;
 
+use ty::WorldRect;
+
 pub mod sprite {
     mod v {
         #[derive(VulkanoShader)]
@@ -18,11 +20,20 @@ pub mod sprite {
     pub use self::v::Shader as vertex;
     pub use self::f::Shader as fragment;
 
-    pub use self::v::ty::DisplayUniforms;
+    pub use self::v::ty::{DisplayUniforms, SpriteUniforms};
 }
 
-impl fmt::Debug for sprite::DisplayUniforms {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "BOUNDS: {:?} !!!", self.bounds)
+impl<'a> From<&'a WorldRect> for sprite::SpriteUniforms {
+    fn from(rect: &'a WorldRect) -> sprite::SpriteUniforms {
+        sprite::SpriteUniforms {
+            pos: [rect.position.0, rect.position.1],
+            bounds: [rect.bounds.0, rect.bounds.1],
+        }
+    }
+}
+
+impl From<WorldRect> for sprite::SpriteUniforms {
+    fn from(rect: WorldRect) -> sprite::SpriteUniforms {
+        sprite::SpriteUniforms::from(&rect)
     }
 }
