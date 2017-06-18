@@ -8,6 +8,7 @@ stateloop = { path = "../states" }
 vulkano = "0.4.0"
 vulkano-win = "0.4.0"
 vulkano-shader-derive = "0.4.0"
+winit = "*"
 
 [replace]
 "vulkano:0.4.0" = { path = "../vulkano/vulkano" }

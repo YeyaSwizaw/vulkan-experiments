@@ -1,7 +1,7 @@
 use ty::WorldRect;
 
 pub struct Sprite {
-    rect: WorldRect
+    pub rect: WorldRect
 }
 
 impl Sprite {
@@ -9,9 +9,5 @@ impl Sprite {
         Sprite {
             rect: rect
         }
-    }
-
-    pub fn rect(&self) -> &WorldRect {
-        &self.rect
     }
 }

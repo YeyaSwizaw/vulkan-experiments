@@ -8,9 +8,9 @@ use stateloop::app::Window;
 use vulkano::instance::{Instance, PhysicalDevice};
 use vulkano::device::{Device, Queue, DeviceExtensions};
 use vulkano::swapchain::{acquire_next_image, Swapchain, SurfaceTransform};
-use vulkano::image::swapchain::SwapchainImage;
 use vulkano::buffer::BufferUsage;
-use vulkano::buffer::cpu_access::CpuAccessibleBuffer;
+use vulkano::buffer::device_local::DeviceLocalBuffer;
+use vulkano::buffer::immutable::ImmutableBuffer;
 use vulkano::pipeline::{GraphicsPipeline, GraphicsPipelineParams, GraphicsPipelineAbstract};
 use vulkano::pipeline::vertex::SingleBufferDefinition;
 use vulkano::pipeline::input_assembly::{InputAssembly, PrimitiveTopology};
@@ -20,10 +20,9 @@ use vulkano::pipeline::depth_stencil::DepthStencil;
 use vulkano::pipeline::blend::Blend;
 use vulkano::descriptor::descriptor_set::DescriptorSet;
 use vulkano::framebuffer::{Subpass, Framebuffer, FramebufferAbstract};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferBuilder, CommandBuffer, DynamicState};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferBuilder, DynamicState};
 use vulkano::sync::{now, GpuFuture};
 
-use ty::{WorldCoords, WorldBounds, WorldRect};
 use sprite::Sprite;
 use shaders;
 
@@ -45,15 +44,14 @@ pub struct Renderer {
     queue: Arc<Queue>,
     swapchain: Arc<Swapchain>,
 
-    vertex_buffer: Arc<CpuAccessibleBuffer<[Point]>>,
-    uniform_buffer: Arc<CpuAccessibleBuffer<shaders::sprite::DisplayUniforms>>,
+    quad_vertex_buffer: Arc<ImmutableBuffer<[Point]>>,
+    display_uniform_buffer: Arc<DeviceLocalBuffer<shaders::sprite::DisplayUniforms>>,
+
     pipeline: Arc<GraphicsPipelineAbstract + Sync + Send>,
     descriptor_set: Arc<DescriptorSet + Sync + Send>,
     framebuffers: Vec<Arc<FramebufferAbstract + Sync + Send>>,
 
     frame_future: UnsafeCell<Box<GpuFuture>>,
-
-    sprites: Vec<Sprite>
 }
 
 impl Renderer {
@@ -124,36 +122,29 @@ impl Renderer {
         };
 
         // Create vertex buffer
-        let vertex_buffer = {
-            CpuAccessibleBuffer::from_iter(
-                device.clone(),
-                BufferUsage::vertex_buffer(),
-                Some(queue.family()),
-                [
-                     Point { point: [0.0, 0.0] },
-                     Point { point: [1.0, 0.0] },
-                     Point { point: [0.0, 1.0] },
-                     Point { point: [1.0, 1.0] },
-                ].iter().cloned()
-            )
-                .expect("Failed to create buffer")
-        };
+        let (quad_vertex_buffer, quad_vertex_buffer_future) = ImmutableBuffer::from_iter(
+            [
+                 Point { point: [0.0, 0.0] },
+                 Point { point: [1.0, 0.0] },
+                 Point { point: [0.0, 1.0] },
+                 Point { point: [1.0, 1.0] },
+            ].iter().cloned(),
+            BufferUsage::vertex_buffer(),
+            Some(queue.family()),
+            queue.clone()
+        )
+            .expect("Failed to create vertex buffer");
 
         let vs = shaders::sprite::vertex::load(&device).expect("Failed to load vertex shader");
         let fs = shaders::sprite::fragment::load(&device).expect("Failed to load vertex shader");
 
         // Create uniform buffer
-        let uniform_buffer = {
-            CpuAccessibleBuffer::from_data(
-                device.clone(),
-                BufferUsage::uniform_buffer(),
-                Some(queue.family()),
-                shaders::sprite::DisplayUniforms {
-                    bounds: [w, h],
-                }
-            )
-                .expect("Failed to create uniform buffer")
-        };
+        let uniform_buffer = DeviceLocalBuffer::new(
+            device.clone(),
+            BufferUsage::uniform_buffer_transfer_dest(),
+            Some(queue.family()),
+        )
+            .expect("Failed to create uniform buffer");
 
         // Create render pass
         let render_pass = Arc::new(single_pass_renderpass!(
@@ -215,90 +206,108 @@ impl Renderer {
                 .build().unwrap()) as Arc<FramebufferAbstract + Send + Sync>
         }).collect();
 
-        Renderer {
+        let mut renderer = Renderer {
             device: device.clone(),
             queue: queue,
             swapchain: swapchain,
 
-            vertex_buffer: vertex_buffer,
-            uniform_buffer: uniform_buffer,
+            quad_vertex_buffer: quad_vertex_buffer,
+            display_uniform_buffer: uniform_buffer,
+
             pipeline: pipeline as Arc<GraphicsPipelineAbstract + Send + Sync>,
             descriptor_set: set as Arc<DescriptorSet + Sync + Send>,
             framebuffers: framebuffers,
 
-            frame_future: UnsafeCell::new(Box::new(now(device)) as Box<GpuFuture>),
+            frame_future: UnsafeCell::new(Box::new(quad_vertex_buffer_future) as Box<GpuFuture>),
+        };
 
-            sprites: vec![
-                Sprite::new(WorldRect {
-                    position: WorldCoords(600, 200),
-                    bounds: WorldBounds(700, 600)
-                }),
-
-                Sprite::new(WorldRect {
-                    position: WorldCoords(300, 800),
-                    bounds: WorldBounds(200, 300)
-                }),
-            ]
-        }
+        renderer.update_display_uniforms(w, h);
+        renderer
     }
 
-    pub fn render(&self) {
-        let mut frame_future = unsafe { 
+    fn with_future<T, F>(&self, f: F) where T: GpuFuture + 'static, F: FnOnce(Box<GpuFuture>) -> T {
+        let frame_future = unsafe { 
             let ptr = self.frame_future.get();
             ptr::read(ptr)
         };
 
-        frame_future.cleanup_finished();
-        let (image_num, acquire_future) = acquire_next_image(
-            self.swapchain.clone(),
-            Duration::new(1, 0)
-        ).unwrap();
-
-        let command_buffer = {
-            let render_pass = AutoCommandBufferBuilder::new(self.device.clone(), self.queue.family())
-                .unwrap()
-                .begin_render_pass(
-                    self.framebuffers[image_num].clone(),
-                    false,
-                    vec![[0.0, 0.0, 0.0, 1.0].into()]
-                )
-                .unwrap();
-
-            self.sprites.iter().fold(render_pass, |buffer, sprite| buffer
-                .draw(
-                    self.pipeline.clone(),
-                    DynamicState::none(),
-                    vec![self.vertex_buffer.clone()], 
-                    self.descriptor_set.clone(), 
-                    shaders::sprite::SpriteUniforms::from(sprite.rect())
-                )
-                .unwrap()
-            )
-                .end_render_pass()
-                .unwrap()
-                .build()
-                .unwrap()
-        };
-
-        let future = frame_future
-            .join(acquire_future)
-            .then_execute(
-                self.queue.clone(), 
-                command_buffer
-            )
-            .unwrap()
-            .then_swapchain_present(
-                self.queue.clone(), 
-                self.swapchain.clone(), 
-                image_num
-            )
-            .then_signal_fence_and_flush()
-            .unwrap();
+        let new_future = f(frame_future);
 
         unsafe {
             let ptr = self.frame_future.get();
-            ptr::write(ptr, Box::new(future) as Box<_>);
+            ptr::write(ptr, Box::new(new_future) as Box<_>);
         }
+    }
+
+    pub fn update_display_uniforms(&mut self, w: u32, h: u32) {
+        self.with_future(|future| {
+            let command_buffer = AutoCommandBufferBuilder::new(self.device.clone(), self.queue.family())
+                .unwrap()
+                .update_buffer(
+                    self.display_uniform_buffer.clone(), 
+                    shaders::sprite::DisplayUniforms {
+                        bounds: [w, h]
+                    }
+                )
+                .unwrap()
+                .build()
+                .unwrap();
+
+            future
+                .then_execute(self.queue.clone(), command_buffer)
+                .unwrap()
+        });
+    }
+
+    pub fn render(&self, sprites: &[Sprite]) {
+        self.with_future(|mut future| {
+            future.cleanup_finished();
+            let (image_num, acquire_future) = acquire_next_image(
+                self.swapchain.clone(),
+                Duration::new(1, 0)
+            ).unwrap();
+
+            let command_buffer = {
+                let render_pass = AutoCommandBufferBuilder::new(self.device.clone(), self.queue.family())
+                    .unwrap()
+                    .begin_render_pass(
+                        self.framebuffers[image_num].clone(),
+                        false,
+                        vec![[0.0, 0.0, 0.0, 1.0].into()]
+                    )
+                    .unwrap();
+
+                sprites.iter().fold(render_pass, |buffer, sprite| buffer
+                    .draw(
+                        self.pipeline.clone(),
+                        DynamicState::none(),
+                        vec![self.quad_vertex_buffer.clone()], 
+                        self.descriptor_set.clone(), 
+                        shaders::sprite::SpriteUniforms::from(&sprite.rect)
+                    )
+                    .unwrap()
+                )
+                    .end_render_pass()
+                    .unwrap()
+                    .build()
+                    .unwrap()
+            };
+
+            future
+                .join(acquire_future)
+                .then_execute(
+                    self.queue.clone(), 
+                    command_buffer
+                )
+                .unwrap()
+                .then_swapchain_present(
+                    self.queue.clone(), 
+                    self.swapchain.clone(), 
+                    image_num
+                )
+                .then_signal_fence_and_flush()
+                .unwrap()
+        })
     }
 }
 

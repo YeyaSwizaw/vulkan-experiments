@@ -1,7 +1,9 @@
 #[macro_use] extern crate stateloop;
 #[macro_use] extern crate vulkano;
 #[macro_use] extern crate vulkano_shader_derive;
+
 extern crate vulkano_win;
+extern crate winit;
 
 use std::time::{Duration, Instant};
 use stateloop::app::{App, Data, Event, Window};
@@ -9,7 +11,11 @@ use stateloop::state::Action;
 
 use vulkano::instance::Instance;
 
+use winit::{VirtualKeyCode, ElementState};
+
 use renderer::Renderer;
+use ty::{WorldCoords, WorldBounds, WorldRect};
+use sprite::Sprite;
 
 mod shaders;
 mod renderer;
@@ -24,25 +30,60 @@ states! {
 
 pub struct D {
     renderer: Renderer,
+
+    key_states: Vec<ElementState>,
+    sprites: Vec<Sprite>,
+
     last_frame_time: Instant
 }
 
 impl MainHandler for Data<D> {
     fn handle_event(&mut self, event: Event) -> Action<State> {
+        let mut d = self.data_mut();
+
         match event {
-            Event::Closed => Action::Quit,
+            Event::Closed => return Action::Quit,
+
+            Event::Resized(w, h) => {
+                d.renderer.update_display_uniforms(w, h);
+                Action::Continue
+            },
+
+            Event::KeyboardInput(state, _, Some(key), _) => {
+                d.key_states[key as usize] = state;
+                Action::Continue
+            },
+
             _ => Action::Continue
         }
     }
 
     fn handle_tick(&mut self) {
+        let mut d = self.data_mut();
+
         let next = Instant::now();
-        println!("Frame Time: {:?}", next - self.data().last_frame_time);
-        self.data_mut().last_frame_time = next;
+        println!("Frame Time: {:?}", next - d.last_frame_time);
+        d.last_frame_time = next;
+
+        if d.key_states[VirtualKeyCode::W as usize] == ElementState::Pressed {
+            d.sprites[0].rect.position.1 -= 5;
+        }
+
+        if d.key_states[VirtualKeyCode::S as usize] == ElementState::Pressed {
+            d.sprites[0].rect.position.1 += 5;
+        }
+
+        if d.key_states[VirtualKeyCode::A as usize] == ElementState::Pressed {
+            d.sprites[0].rect.position.0 -= 5;
+        }
+
+        if d.key_states[VirtualKeyCode::D as usize] == ElementState::Pressed {
+            d.sprites[0].rect.position.0 += 5;
+        }
     }
 
     fn handle_render(&self) {
-        self.data().renderer.render();
+        self.data().renderer.render(&self.data().sprites);
     }
 }
 
@@ -63,6 +104,20 @@ fn main() {
 
         |window| D {
             renderer: Renderer::new(instance, window),
+
+            key_states: vec![ElementState::Released; VirtualKeyCode::Yen as usize],
+            sprites: vec![
+                Sprite::new(WorldRect {
+                    position: WorldCoords(600, 200),
+                    bounds: WorldBounds(700, 600)
+                }),
+
+                Sprite::new(WorldRect {
+                    position: WorldCoords(300, 800),
+                    bounds: WorldBounds(200, 300)
+                }),
+            ],
+
             last_frame_time: Instant::now()
         }
     )
