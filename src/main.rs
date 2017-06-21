@@ -39,7 +39,9 @@ pub struct D {
     sprites: Vec<Sprite>,
     terrain: TerrainMesh,
 
-    last_frame_time: Instant
+
+    frame: u32,
+    start_time: Instant
 }
 
 impl MainHandler for Data<D> {
@@ -66,9 +68,10 @@ impl MainHandler for Data<D> {
     fn handle_tick(&mut self) {
         let mut d = self.data_mut();
 
-        let next = Instant::now();
-        // println!("Frame Time: {:?}", next - d.last_frame_time);
-        d.last_frame_time = next;
+        d.frame += 1;
+        let time = Instant::now();
+        let duration = time - d.start_time;
+        println!("{} ({})", 1000000000 / (duration / d.frame).subsec_nanos(), (duration / d.frame).subsec_nanos());
 
         if d.key_states[VirtualKeyCode::W as usize] == ElementState::Pressed {
             d.sprites[0].rect.position.1 -= 5;
@@ -85,6 +88,17 @@ impl MainHandler for Data<D> {
         if d.key_states[VirtualKeyCode::D as usize] == ElementState::Pressed {
             d.sprites[0].rect.position.0 += 5;
         }
+
+        let diff = 1.0f64.to_radians() / 5.0;
+
+        let mut coords = vec![TerrainVertex::Inner(WorldCoords(800, 700))];
+        for deg in 0 .. 271 {
+            let rad = (deg as u32 as f64 + (diff * d.frame as f64 % 5.0)).to_radians() * 4.0 / 3.0;
+            coords.push(TerrainVertex::Surface(WorldCoords(800 + (600.0 * rad.sin()) as i32, 700 + (600.0 * rad.cos()) as i32)));
+        }
+
+        d.terrain = TerrainMesh::new(coords);
+        d.renderer.load_terrain(&d.terrain);
     }
 
     fn handle_render(&self) {
@@ -108,6 +122,12 @@ fn main() {
             .with_dimensions(800, 600),
 
         |window| {
+            let mut coords = vec![TerrainVertex::Inner(WorldCoords(800, 700))];
+            for deg in 0 .. 360 {
+                let rad = (deg as f64).to_radians();
+                coords.push(TerrainVertex::Surface(WorldCoords(800 + (600.0 * rad.sin()) as i32, 700 + (600.0 * rad.cos()) as i32)));
+            }
+
             let mut d = D {
                 renderer: Renderer::new(instance, window),
 
@@ -125,19 +145,10 @@ fn main() {
                     }),
                 ],
 
-                terrain: TerrainMesh::new(vec![
-                    TerrainVertex::Inner(WorldCoords(0, 0)),
-                    TerrainVertex::Surface(WorldCoords(0, 100)),
-                    TerrainVertex::Surface(WorldCoords(100, 200)),
-                    TerrainVertex::Inner(WorldCoords(100, 0)),
-                    TerrainVertex::Surface(WorldCoords(150, 450)),
-                    TerrainVertex::Surface(WorldCoords(350, 150)),
-                    TerrainVertex::Inner(WorldCoords(350, 0)),
-                    TerrainVertex::Surface(WorldCoords(450, 550)),
-                    TerrainVertex::Inner(WorldCoords(450, 0))
-                ]),
+                terrain: TerrainMesh::new(coords),
 
-                last_frame_time: Instant::now()
+                frame: 0,
+                start_time: Instant::now()
             };
 
             d.renderer.load_terrain(&d.terrain);
@@ -145,5 +156,5 @@ fn main() {
         }
     )
         .unwrap()
-        .run(30, State::Main());
+        .run(60, State::Main());
 }
