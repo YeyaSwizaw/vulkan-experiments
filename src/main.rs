@@ -1,3 +1,5 @@
+#![feature(conservative_impl_trait)]
+
 #[macro_use] extern crate stateloop;
 #[macro_use] extern crate vulkano;
 #[macro_use] extern crate vulkano_shader_derive;
@@ -16,11 +18,13 @@ use winit::{VirtualKeyCode, ElementState};
 use renderer::Renderer;
 use ty::{WorldCoords, WorldBounds, WorldRect};
 use sprite::Sprite;
+use terrain::{TerrainMesh, TerrainVertex};
 
 mod shaders;
 mod renderer;
 mod ty;
 mod sprite;
+mod terrain;
 
 states! {
     State {
@@ -33,6 +37,7 @@ pub struct D {
 
     key_states: Vec<ElementState>,
     sprites: Vec<Sprite>,
+    terrain: TerrainMesh,
 
     last_frame_time: Instant
 }
@@ -62,7 +67,7 @@ impl MainHandler for Data<D> {
         let mut d = self.data_mut();
 
         let next = Instant::now();
-        println!("Frame Time: {:?}", next - d.last_frame_time);
+        // println!("Frame Time: {:?}", next - d.last_frame_time);
         d.last_frame_time = next;
 
         if d.key_states[VirtualKeyCode::W as usize] == ElementState::Pressed {
@@ -102,23 +107,41 @@ fn main() {
             .with_title("Platformer")
             .with_dimensions(800, 600),
 
-        |window| D {
-            renderer: Renderer::new(instance, window),
+        |window| {
+            let mut d = D {
+                renderer: Renderer::new(instance, window),
 
-            key_states: vec![ElementState::Released; VirtualKeyCode::Yen as usize],
-            sprites: vec![
-                Sprite::new(WorldRect {
-                    position: WorldCoords(600, 200),
-                    bounds: WorldBounds(700, 600)
-                }),
+                key_states: vec![ElementState::Released; VirtualKeyCode::Yen as usize],
 
-                Sprite::new(WorldRect {
-                    position: WorldCoords(300, 800),
-                    bounds: WorldBounds(200, 300)
-                }),
-            ],
+                sprites: vec![
+                    Sprite::new(WorldRect {
+                        position: WorldCoords(600, 200),
+                        bounds: WorldBounds(700, 600)
+                    }),
 
-            last_frame_time: Instant::now()
+                    Sprite::new(WorldRect {
+                        position: WorldCoords(300, 800),
+                        bounds: WorldBounds(200, 300)
+                    }),
+                ],
+
+                terrain: TerrainMesh::new(vec![
+                    TerrainVertex::Inner(WorldCoords(0, 0)),
+                    TerrainVertex::Surface(WorldCoords(0, 100)),
+                    TerrainVertex::Surface(WorldCoords(100, 200)),
+                    TerrainVertex::Inner(WorldCoords(100, 0)),
+                    TerrainVertex::Surface(WorldCoords(150, 450)),
+                    TerrainVertex::Surface(WorldCoords(350, 150)),
+                    TerrainVertex::Inner(WorldCoords(350, 0)),
+                    TerrainVertex::Surface(WorldCoords(450, 550)),
+                    TerrainVertex::Inner(WorldCoords(450, 0))
+                ]),
+
+                last_frame_time: Instant::now()
+            };
+
+            d.renderer.load_terrain(&d.terrain);
+            d
         }
     )
         .unwrap()

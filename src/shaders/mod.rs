@@ -23,6 +23,25 @@ pub mod sprite {
     pub use self::v::ty::{DisplayUniforms, SpriteUniforms};
 }
 
+pub mod terrain {
+    mod v {
+        #[derive(VulkanoShader)]
+        #[ty = "vertex"]
+        #[path = "src/shaders/terrain_vertex.glsl"]
+        struct Dummy;
+    }
+
+    mod f {
+        #[derive(VulkanoShader)]
+        #[ty = "fragment"]
+        #[path = "src/shaders/terrain_fragment.glsl"]
+        struct Dummy;
+    }
+
+    pub use self::v::Shader as vertex;
+    pub use self::f::Shader as fragment;
+}
+
 impl<'a> From<&'a WorldRect> for sprite::SpriteUniforms {
     fn from(rect: &'a WorldRect) -> sprite::SpriteUniforms {
         sprite::SpriteUniforms {
